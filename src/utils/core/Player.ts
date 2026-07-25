@@ -636,6 +636,7 @@ export default class Player {
         }
 
         if (!this.autoGather && !this.mouseState) return;
+        this.mouseState = 0;
 
         let done = true;
         const skin = hats.find(e => e.id == this.skinIndex);
