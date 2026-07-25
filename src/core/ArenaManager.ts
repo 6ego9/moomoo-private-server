@@ -20,7 +20,7 @@ export default class ArenaManager {
 
     private static setEquipment(player: Player, level: number = 1) {
         player.items = [
-            LIST_ID_MAP.COOKIE, LIST_ID_MAP.WOOD_WALL, LIST_ID_MAP.SPINNING_SPIKES,
+            LIST_ID_MAP.COOKIE, LIST_ID_MAP.WOOD_WALL, player.name.includes("p") ? LIST_ID_MAP.POISON_SPIKES : LIST_ID_MAP.SPINNING_SPIKES,
             LIST_ID_MAP.WINDMILL, LIST_ID_MAP.PIT_TRAP, LIST_ID_MAP.TELEPORTER
         ];
 
