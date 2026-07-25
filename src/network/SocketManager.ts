@@ -24,8 +24,15 @@ export default class SocketManager {
             this.send(PacketMap.SERVER_TO_CLIENT.IO_INIT, sessionId, 0, "0", 1);
         });
 
+        this.send(PacketMap.SERVER_TO_CLIENT.IO_INIT, sessionId, 0, "0", 0);
+        let packets = 0;
+
         socket.on("message", (raw, isBinary) => {
             if (!isBinary) return SessionManager.terminate(sessionId);
+
+            packets++;
+            setTimeout(() => { packets--; }, 1e3);
+            if (packets > 120) return;
 
             try {
                 const [type, data] = this.decode(raw);
@@ -211,17 +218,17 @@ export default class SocketManager {
             const player = SessionManager.get(this.sessionId)!.player;
             if (!player) return;
 
-            if (typeof dir !== "number") dir = 0;
-            player.dir = dir
+            if (typeof dir !== "number") dir = player.dir;
+            player.dir = dir;
 
             if (toggle) {
                 if (player.buildIndex >= 0) {
+                    player.dir = dir;
                     player.buildItem(items.list[player.buildIndex]);
                 } else {
+                    player.dir = dir;
                     player.mouseState = 1;
                 }
-            } else {
-                player.mouseState = 0;
             }
         });
 
