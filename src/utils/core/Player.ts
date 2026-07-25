@@ -380,8 +380,9 @@ export default class Player {
 
         for (let i = 0, len = gameObjects.length; i < len; i++) {
             const gameObject = gameObjects[i];
+            const isTrap = gameObject.trap && gameObject.hideFromEnemy && gameObject.ownerSID !== this.sid;
 
-            if (gameObject.active) {
+            if (gameObject.active && !isTrap) {
                 const dist = getDist(this.position, gameObject) - gameObject.scale;
                 const isWithinRange = dist <= wpn.range;
 
