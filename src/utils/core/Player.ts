@@ -284,6 +284,7 @@ export default class Player {
 
         this.lastDeath.x = this.position.x;
         this.lastDeath.y = this.position.y;
+        this.health = 0;
         this.sentTo.clear();
 
         const victimSession = SessionManager.get(this.socketId);
