@@ -110,7 +110,7 @@ export default class GameObject {
 
     private static typeIds = new Set([2, 3, 4]);
     sentTo = new Set<string>();
-    turretReload = 0;
+    turretReload = 2200;
 
     visibleToPlayer(player: Player) {
         return !this.hideFromEnemy || this.ownerSID === player.sid;
