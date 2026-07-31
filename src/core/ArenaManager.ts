@@ -6,7 +6,6 @@ import GameObject from "@utils/GameObject";
 import { LIST_ID_MAP, WEAPON_ID_MAP } from "@utils/items";
 import PacketMap from "@utils/PacketMap";
 import Player, { weaponVariants } from "@utils/Player";
-import randInt from "@utils/randInt";
 
 const arenaX = Configuration.MAP_SIZE / 2;
 const arenaY = Configuration.MAP_SIZE - 1200;
@@ -17,6 +16,13 @@ export default class ArenaManager {
     private static gameObjects: GameObject[] = [];
     private static fighters: Player[] = [];
     private static countdown = 0;
+    private static offsets = [{
+        x: -500,
+        y: 0
+    }, {
+        x: 500,
+        y: 0
+    }];
 
     private static setEquipment(player: Player, level: number = 1) {
         player.items = [
@@ -127,8 +133,10 @@ export default class ArenaManager {
             }
 
             fighter.spawn(fighter.name);
-            fighter.position.x = arenaX + randInt(-300, 300);
-            fighter.position.y = arenaY + randInt(-300, 300);
+            fighter.velocity.x = 0;
+            fighter.velocity.y = 0;
+            fighter.position.x = arenaX + this.offsets[i].x;
+            fighter.position.y = arenaY + this.offsets[i].y;
 
             this.regear(fighter);
             this.pausePlayer(fighter);
@@ -187,8 +195,10 @@ export default class ArenaManager {
 
             fighter.score = 0;
             fighter.spawn(fighter.name);
-            fighter.position.x = arenaX + randInt(-300, 300);
-            fighter.position.y = arenaY + randInt(-300, 300);
+            fighter.velocity.x = 0;
+            fighter.velocity.y = 0;
+            fighter.position.x = arenaX + this.offsets[i].x;
+            fighter.position.y = arenaY + this.offsets[i].y;
             this.setEquipment(fighter);
             this.pausePlayer(fighter);
             this.fighters.push(fighter);
