@@ -8,6 +8,7 @@ import Player, { weaponVariants } from "@utils/Player";
 import randInt from "@utils/randInt";
 import randString from "@utils/randString";
 import { STORE_HAT_MAP } from "@utils/store";
+import ObjectManager from "@core/ObjectManager";
 
 export default class CommandManager {
     static process(player: Player, msg: string) {
@@ -22,6 +23,11 @@ export default class CommandManager {
             if (nearest) {
                 player.position.x = nearest.position.x;
                 player.position.y = nearest.position.y;
+            }
+        } else if (cmdId === "clear") {
+            const sids = ObjectManager.gameObjects.map(obj => obj.sid);
+            for (const sid of sids) {
+                ObjectManager.remove(sid);
             }
         } else if (cmdId === "r" || cmdId === "ruby") {
             player.weaponXP[player.weaponIndex] = weaponVariants[3].xp;
