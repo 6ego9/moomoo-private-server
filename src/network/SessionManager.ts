@@ -5,6 +5,11 @@ import { WebSocket } from "ws";
 export default class SessionManager {
     private static sessionIdMap = new Map<string, Session>();
 
+    // Expose all active sessions
+    static get sessions() {
+        return this.sessionIdMap;
+    }
+
     static create(ws: WebSocket) {
         let id = randString();
 
@@ -26,5 +31,16 @@ export default class SessionManager {
 
         this.sessionIdMap.delete(id);
         return session.terminate();
+    }
+
+    // Broadcast a packet to every active player on the server
+    static broadcast(packetType: any, ...args: any[]) {
+        for (const session of this.sessionIdMap.values()) {
+            if (session && typeof session.send === "function" && session.socket && session.socket.readyState === WebSocket.OPEN) {
+                try {
+                    session.send(packetType, ...args);
+                } catch (e) {}
+            }
+        }
     }
 }
