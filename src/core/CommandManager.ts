@@ -25,7 +25,7 @@ function getPos(entity: any): { x: number; y: number } | null {
     return null;
 }
 
-// Broadcast a packet to all connected player clients
+// Broadcast packet to all connected player clients
 function broadcastToClients(packetType: any, data: any) {
     if (typeof (SessionManager as any).broadcast === "function") {
         (SessionManager as any).broadcast(packetType, data);
@@ -42,6 +42,27 @@ function broadcastToClients(packetType: any, data: any) {
             }
         }
     }
+}
+
+// Weapon attack speed lookup (in milliseconds)
+function getWeaponSpeed(weaponId: number): number {
+    const speeds: Record<number, number> = {
+        0: 300,  // Tool Hammer
+        1: 400,  // Hand Axe
+        2: 400,  // Great Axe
+        3: 300,  // Short Sword
+        4: 300,  // Katana
+        5: 700,  // Polearm
+        6: 300,  // Bat
+        7: 100,  // Daggers
+        8: 400,  // Stick
+        9: 600,  // Hunting Bow
+        10: 400, // Great Hammer
+        12: 700, // Crossbow
+        13: 230, // Repeater Crossbow
+        15: 1500 // Musket
+    };
+    return speeds[weaponId] ?? 350;
 }
 
 // Tier mapping: r = Ruby (3), d = Diamond (2), g = Gold (1), s = Stone (0)
@@ -135,11 +156,11 @@ export default class CommandManager {
                     }
                 }
             }
-        // 4. Bot Spawner (supports count arguments like !sc 2, !sthb 3, !s 10, etc.)
+        // 4. Bot Spawner (supports counts like !sc 2, !sthb 3, !s 10, etc.)
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             let spawnCount = 1;
             if (parsed[1] && !isNaN(parseInt(parsed[1]))) {
-                spawnCount = Math.max(1, Math.min(1000, parseInt(parsed[1])));
+                spawnCount = Math.max(1, Math.min(50, parseInt(parsed[1])));
             }
 
             const cmdParts = cmdId.split("");
@@ -152,12 +173,13 @@ export default class CommandManager {
                 bot.position.y = player.position.y + randInt(-300, 300);
                 bot.isAI = true;
 
-                // Grant infinite building resources
+                // Infinite building resources
                 (bot as any).wood = 999999;
                 (bot as any).stone = 999999;
                 (bot as any).food = 999999;
                 (bot as any).points = 999999;
                 (bot as any).items = [0, 3, 6, 10, 15, 17]; // food, walls, spikes, mills, traps, turrets
+                (bot as any).lockMove = false;
 
                 // Dummy session for packet safety
                 const dummySession = {
@@ -214,15 +236,22 @@ export default class CommandManager {
 
                             const now = Date.now();
 
-                            // 1. TRAP ESCAPING: Auto-Break Traps with Hammer + Tank Gear
-                            let targetTrap: any = (bot as any).trap ?? (bot as any).trapObject ?? (bot as any).trapped;
+                            // 1. TRAP DETECTION & PHYSICAL LOCK
+                            // Check if bot stepped on an active trap
+                            let targetTrap: any = (bot as any).trap ?? (bot as any).trapObject;
                             if (!targetTrap) {
                                 targetTrap = ObjectManager.gameObjects.find(obj => 
-                                    obj && obj.id === 15 && getPos(obj) && getDistSq(getPos(obj)!, botPos) <= 65 * 65 && (obj as any).health > 0
+                                    obj && (obj.id === 15 || (obj as any).trap === true) && 
+                                    getPos(obj) && 
+                                    getDistSq(getPos(obj)!, botPos) <= 55 * 55 && 
+                                    (obj as any).health > 0 &&
+                                    (obj as any).owner?.sid !== bot.sid
                                 );
                             }
 
+                            // If in trap -> physically lock movement
                             if (targetTrap) {
+                                (bot as any).lockMove = true;
                                 const trapPos = getPos(targetTrap)!;
                                 const trapAngle = Math.atan2(trapPos.y - botPos.y, trapPos.x - botPos.x);
 
@@ -230,7 +259,7 @@ export default class CommandManager {
                                 bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? 40;
                                 bot.weapons[0] = bot.weaponIndex = hammerId;
 
-                                // Respect 400ms hammer cooldown
+                                // Respect Great Hammer 400ms Cooldown
                                 if (now - lastAttackTime >= 400) {
                                     lastAttackTime = now;
 
@@ -242,25 +271,31 @@ export default class CommandManager {
                                         if (targetTrap.changeHealth(-250, bot)) {
                                             ObjectManager.remove(targetTrap.sid);
                                             broadcastToClients(PacketMap.SERVER_TO_CLIENT.KILL_OBJECT, targetTrap.sid);
+                                            (bot as any).lockMove = false;
                                         }
                                     } else {
                                         targetTrap.health = (targetTrap.health || 500) - 250;
                                         if (targetTrap.health <= 0) {
                                             ObjectManager.remove(targetTrap.sid);
                                             broadcastToClients(PacketMap.SERVER_TO_CLIENT.KILL_OBJECT, targetTrap.sid);
+                                            (bot as any).lockMove = false;
                                         }
                                     }
                                 }
 
-                                if (bot.health < 100) {
+                                // Auto-heal while stuck in trap
+                                if (bot.health < 100 && now - lastHealTime >= 120) {
+                                    lastHealTime = now;
                                     bot.health = Math.min(bot.maxHealth || 100, bot.health + 40);
                                     if (typeof (bot as any).changeHealth === "function") (bot as any).changeHealth(40, bot);
                                 }
-                                return;
+                                return; // DO NOT MOVE WHILE TRAPPED
+                            } else {
+                                (bot as any).lockMove = false;
                             }
 
                             // 2. AUTO-HEAL: Soldier Helmet + Fast Eating
-                            if (bot.health < 85) {
+                            if (bot.health < 80) {
                                 bot.skinIndex = STORE_HAT_MAP.SOLDIER_HELMET ?? 6;
                                 if (now - lastHealTime >= 120) {
                                     lastHealTime = now;
@@ -289,43 +324,45 @@ export default class CommandManager {
 
                             bot.angle = (bot as any).dir = (bot as any).targetAngle = (bot as any).rotation = (bot as any).viewAngle = angleToEnemy;
 
-                            // 4. MOVEMENT & HAT COMBOS
-                            if (dist > 130) {
-                                // Pursuit Mode: Booster Hat + Monkey Tail
-                                if (bot.health >= 85) {
-                                    bot.skinIndex = (STORE_HAT_MAP as any).BOOSTER_HAT ?? 12;
-                                    (bot as any).tailIndex = 11;
+                            // 4. MOVEMENT (Only if NOT locked in a trap)
+                            if (!(bot as any).lockMove) {
+                                if (dist > 130) {
+                                    // Gap Closer Sprint: Booster Hat + Monkey Tail
+                                    if (bot.health >= 80) {
+                                        bot.skinIndex = (STORE_HAT_MAP as any).BOOSTER_HAT ?? 12;
+                                        (bot as any).tailIndex = 11;
+                                    }
+                                    const moveSpeed = 8.0;
+                                    bot.position.x += Math.cos(angleToEnemy) * moveSpeed;
+                                    bot.position.y += Math.sin(angleToEnemy) * moveSpeed;
+                                } else {
+                                    // Melee Range: Bull Helmet + Shadow Wings for maximum burst
+                                    if (bot.health >= 80) {
+                                        bot.skinIndex = (STORE_HAT_MAP as any).BULL_HELMET ?? 7;
+                                        (bot as any).tailIndex = 19;
+                                    }
+                                    const orbitAngle = angleToEnemy + (Math.PI / 2 * 0.4 * strafeDir);
+                                    const strafeSpeed = 4.0;
+                                    bot.position.x += Math.cos(orbitAngle) * strafeSpeed;
+                                    bot.position.y += Math.sin(orbitAngle) * strafeSpeed;
+                                    if (Math.random() < 0.05) strafeDir *= -1;
                                 }
-                                const moveSpeed = 8.5;
-                                bot.position.x += Math.cos(angleToEnemy) * moveSpeed;
-                                bot.position.y += Math.sin(angleToEnemy) * moveSpeed;
-                            } else {
-                                // Melee Range: Bull Helmet + Shadow Wings
-                                if (bot.health >= 85) {
-                                    bot.skinIndex = (STORE_HAT_MAP as any).BULL_HELMET ?? 7;
-                                    (bot as any).tailIndex = 19;
-                                }
-                                const orbitAngle = angleToEnemy + (Math.PI / 2 * 0.4 * strafeDir);
-                                const strafeSpeed = 4.0;
-                                bot.position.x += Math.cos(orbitAngle) * strafeSpeed;
-                                bot.position.y += Math.sin(orbitAngle) * strafeSpeed;
-                                if (Math.random() < 0.05) strafeDir *= -1;
                             }
 
-                            // 5. ATTACK TIMING (Respects Katana 300ms Cooldown)
-                            const weaponSpeed = 300; // Katana cooldown in ms
+                            // 5. ATTACK COMBOS (Respects Weapon Cooldown)
+                            const currentWeaponSpeed = getWeaponSpeed(bot.weaponIndex);
                             if (dist <= 160) {
                                 bot.weapons[0] = bot.weaponIndex = katanaId;
 
-                                if (now - lastAttackTime >= weaponSpeed) {
+                                if (now - lastAttackTime >= currentWeaponSpeed) {
                                     lastAttackTime = now;
 
                                     if (typeof (bot as any).gather === "function") (bot as any).gather(PlayerManager.players);
                                     if (typeof (bot as any).hit === "function") (bot as any).hit(angleToEnemy);
 
-                                    // Apply melee damage to player
+                                    // Direct damage calculation & knockback
                                     if (typeof target.changeHealth === "function") {
-                                        const hitDmg = 55; // Bull Helmet + Katana
+                                        const hitDmg = 50; // Bull Helmet + Katana
                                         target.changeHealth(-hitDmg, bot);
 
                                         if (typeof (target as any).xVel === "number") {
@@ -336,12 +373,13 @@ export default class CommandManager {
                                 }
                             }
 
-                            // 6. OFFENSIVE PLACEMENT: Place Spikes & Pit Traps
+                            // 6. OFFENSIVE PLACEMENT (Spikes & Pit Traps)
                             if (dist <= 220 && now - lastPlaceTime >= 850) {
                                 lastPlaceTime = now;
                                 const isTrap = Math.random() < 0.45;
                                 const placeId = isTrap ? 15 : 6;
-                                const placeDist = 65;
+                                const placeScale = isTrap ? 50 : 49;
+                                const placeDist = 60;
                                 const placeX = botPos.x + Math.cos(angleToEnemy) * placeDist;
                                 const placeY = botPos.y + Math.sin(angleToEnemy) * placeDist;
                                 const objSid = Math.floor(Math.random() * 1000000) + 1000;
@@ -352,7 +390,7 @@ export default class CommandManager {
                                     y: placeY,
                                     position: { x: placeX, y: placeY },
                                     dir: angleToEnemy,
-                                    scale: 45,
+                                    scale: placeScale,
                                     type: 0,
                                     id: placeId,
                                     health: 500,
@@ -363,10 +401,9 @@ export default class CommandManager {
                                     trap: isTrap
                                 };
 
-                                // Add to server memory
                                 if (typeof (ObjectManager as any).add === "function") {
                                     try {
-                                        (ObjectManager as any).add(objSid, placeX, placeY, angleToEnemy, 45, 0, newObjectData, true, bot);
+                                        (ObjectManager as any).add(objSid, placeX, placeY, angleToEnemy, placeScale, 0, newObjectData, true, bot);
                                     } catch (e) {
                                         ObjectManager.gameObjects.push(newObjectData as any);
                                     }
@@ -374,9 +411,9 @@ export default class CommandManager {
                                     ObjectManager.gameObjects.push(newObjectData as any);
                                 }
 
-                                // Broadcast to all clients so everyone can see and interact with it
+                                // Broadcast to all players so everyone sees the object and collides with it
                                 broadcastToClients(PacketMap.SERVER_TO_CLIENT.LOAD_GAME_OBJECT, [
-                                    objSid, placeX, placeY, angleToEnemy, 45, 0, placeId, bot.sid
+                                    objSid, placeX, placeY, angleToEnemy, placeScale, 0, placeId, bot.sid
                                 ]);
                             }
                         } catch (err) {
