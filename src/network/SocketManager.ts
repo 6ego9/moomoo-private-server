@@ -12,7 +12,6 @@ type EventKey = keyof MOOMOO_CLIENT_TO_SERVER_MAP;
 type EventCallback<K extends EventKey> = (...args: MOOMOO_CLIENT_TO_SERVER_MAP[K]) => void;
 
 export default class SocketManager {
-    // In-memory global chat history (stores last 30 messages)
     private static chatHistory: Array<{ sid: number; msg: string }> = [];
 
     private handlers: {
@@ -39,7 +38,7 @@ export default class SocketManager {
 
             try {
                 const [type, data] = this.decode(raw);
-                setTimeout(() => { this.dispatch(type, data); }, 15); // fake artifical ping
+                setTimeout(() => { this.dispatch(type, data); }, 15);
             } catch (e) { }
         });
 
@@ -91,7 +90,7 @@ export default class SocketManager {
     send<K extends keyof MOOMOO_SERVER_TO_CLIENT_MAP>(type: K, ...data: MOOMOO_SERVER_TO_CLIENT_MAP[K]) {
         if (this.socket.readyState !== WebSocket.OPEN) return;
         const binary = encode([type, data]);
-        setTimeout(() => { this.socket.send(binary); }, 15); // fake artifical ping
+        setTimeout(() => { this.socket.send(binary); }, 15);
     }
 
     hookEvents() {
@@ -177,7 +176,7 @@ export default class SocketManager {
             this.send(PacketMap.SERVER_TO_CLIENT.SET_UP_GAME, ourPlayer.sid);
             this.send(PacketMap.SERVER_TO_CLIENT.UPDATE_LEADERBOARD, getLeaderboardData());
 
-            // Send past chat history to the newly joined player
+            // Replay chat history for newly joined players
             setTimeout(() => {
                 for (const item of SocketManager.chatHistory) {
                     this.send(PacketMap.SERVER_TO_CLIENT.RECEIVE_CHAT, item.sid, item.msg);
@@ -211,7 +210,7 @@ export default class SocketManager {
             const player = session.player;
             if (!player || typeof msg !== "string") return;
 
-            // 1. Process server commands (!sc, !sthb, !rd, etc.) and do not broadcast command text
+            // Run commands (!god, !sc, !sthb, etc.) without broadcasting command text
             if (msg.startsWith("!")) {
                 CommandManager.process(player, msg);
                 return;
@@ -219,13 +218,11 @@ export default class SocketManager {
 
             const cleanMsg = msg.slice(0, 35);
 
-            // 2. Store in server chat history
             SocketManager.chatHistory.push({ sid: player.sid, msg: cleanMsg });
             if (SocketManager.chatHistory.length > 30) {
                 SocketManager.chatHistory.shift();
             }
 
-            // 3. Broadcast globally to every player across the whole server
             const allSessions = (SessionManager as any).sessions.values 
                 ? Array.from((SessionManager as any).sessions.values()) 
                 : Object.values((SessionManager as any).sessions);
@@ -257,6 +254,12 @@ export default class SocketManager {
                 } else {
                     player.dir = dir;
                     player.mouseState = 1;
+
+                    // 0ms instant cooldown in godmode
+                    if ((player as any).isGod) {
+                        if ((player as any).reloads) (player as any).reloads[player.weaponIndex] = 0;
+                        if (typeof (player as any).gather === "function") (player as any).gather(PlayerManager.players);
+                    }
                 }
             }
         });
