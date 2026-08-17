@@ -12,6 +12,9 @@ type EventKey = keyof MOOMOO_CLIENT_TO_SERVER_MAP;
 type EventCallback<K extends EventKey> = (...args: MOOMOO_CLIENT_TO_SERVER_MAP[K]) => void;
 
 export default class SocketManager {
+    // In-memory global chat history (stores last 30 messages)
+    private static chatHistory: Array<{ sid: number; msg: string }> = [];
+
     private handlers: {
         [K in EventKey]?: EventCallback<K>
     } = {};
@@ -151,7 +154,7 @@ export default class SocketManager {
             if (isWeapon) {
                 player.buildIndex = -1;
                 player.weaponIndex = id as any;
-                player.updateWeaponry(); // enforce weapon loadouts
+                player.updateWeaponry();
             } else {
                 if (player.buildIndex === id) {
                     player.buildIndex = -1;
@@ -168,9 +171,18 @@ export default class SocketManager {
                 return PlayerManager.get(this.sessionId)!.spawn(data.name);
 
             const ourPlayer = PlayerManager.create(this.sessionId, data.name);
-            SessionManager.get(this.sessionId)!.player = ourPlayer;
+            const session = SessionManager.get(this.sessionId);
+            if (session) session.player = ourPlayer;
+
             this.send(PacketMap.SERVER_TO_CLIENT.SET_UP_GAME, ourPlayer.sid);
             this.send(PacketMap.SERVER_TO_CLIENT.UPDATE_LEADERBOARD, getLeaderboardData());
+
+            // Send past chat history to the newly joined player
+            setTimeout(() => {
+                for (const item of SocketManager.chatHistory) {
+                    this.send(PacketMap.SERVER_TO_CLIENT.RECEIVE_CHAT, item.sid, item.msg);
+                }
+            }, 100);
         });
 
         this.on(PacketMap.CLIENT_TO_SERVER.STORE, (buy, id, index) => {
@@ -192,20 +204,37 @@ export default class SocketManager {
             }
         });
 
+        // GLOBAL CHAT HANDLER
         this.on(PacketMap.CLIENT_TO_SERVER.SEND_CHAT, (msg) => {
-            const player = SessionManager.get(this.sessionId)!.player;
-            const players = PlayerManager.players;
-            if (!player) return;
+            const session = SessionManager.get(this.sessionId);
+            if (!session) return;
+            const player = session.player;
+            if (!player || typeof msg !== "string") return;
 
-            if (msg.startsWith("!")) CommandManager.process(player, msg);
+            // 1. Process server commands (!sc, !sthb, !rd, etc.) and do not broadcast command text
+            if (msg.startsWith("!")) {
+                CommandManager.process(player, msg);
+                return;
+            }
 
-            for (let i = 0; i < players.length; i++) {
-                const other = players[i];
-                if (!other) continue;
+            const cleanMsg = msg.slice(0, 35);
 
-                if (other.canSee(player) && player.sentTo.has(other.socketId)) {
-                    const otherSession = SessionManager.get(other.socketId);
-                    if (otherSession) otherSession.send(PacketMap.SERVER_TO_CLIENT.RECEIVE_CHAT, player.sid, msg);
+            // 2. Store in server chat history
+            SocketManager.chatHistory.push({ sid: player.sid, msg: cleanMsg });
+            if (SocketManager.chatHistory.length > 30) {
+                SocketManager.chatHistory.shift();
+            }
+
+            // 3. Broadcast globally to every player across the whole server
+            const allSessions = (SessionManager as any).sessions.values 
+                ? Array.from((SessionManager as any).sessions.values()) 
+                : Object.values((SessionManager as any).sessions);
+
+            for (const s of allSessions as any[]) {
+                if (s && typeof s.send === "function") {
+                    try {
+                        s.send(PacketMap.SERVER_TO_CLIENT.RECEIVE_CHAT, player.sid, cleanMsg);
+                    } catch (e) {}
                 }
             }
         });
