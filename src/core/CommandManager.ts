@@ -113,19 +113,45 @@ export default class CommandManager {
                 ObjectManager.remove(sid);
                 broadcastToClients(PacketMap.SERVER_TO_CLIENT.KILL_OBJECT, sid);
             }
-        // 1. Dual weapon upgrade combos (e.g. !rd, !dr, !rg, !gr, !dg, !gd, !rr, !dd, !gg, !rs, etc.)
+        // 1. Godmode Command (!god / !god off)
+        } else if (cmdId === "god") {
+            const toggle = parsed[1] ? parsed[1].toLowerCase() : "";
+
+            if (toggle === "off" || toggle === "0" || toggle === "false") {
+                (player as any).isGod = false;
+                player.maxHealth = 100;
+                player.health = 100;
+                (player as any).shameCount = 0;
+                (player as any).shameTimer = 0;
+            } else {
+                (player as any).isGod = true;
+                player.maxHealth = 100000000000;
+                player.health = 100000000000;
+                (player as any).shameCount = 0;
+                (player as any).shameTimer = 0;
+                (player as any).wood = 999999999;
+                (player as any).stone = 999999999;
+                (player as any).food = 999999999;
+                (player as any).points = 999999999;
+            }
+
+            const session = SessionManager.get(player.socketId);
+            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_HEALTH, player.sid, Math.round(player.health));
+            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_PLAYER_VALUE, "points", (player as any).points, true);
+
+        // 2. Dual weapon upgrade combos (e.g. !rd, !dr, !rg, !gr, !dg, !gd, !rr, !dd, !gg, !rs, etc.)
         } else if (cmdId.length === 2 && cmdId !== "ss" && cmdId[0] in TIER_MAP && cmdId[1] in TIER_MAP) {
             const primaryTier = TIER_MAP[cmdId[0]];
             const secondaryTier = TIER_MAP[cmdId[1]];
             applyWeaponTiers(player, primaryTier, secondaryTier);
 
-        // 2. Dual weapon upgrades with arguments (e.g. !r d, !ruby diamond, !gold ruby)
+        // 3. Dual weapon upgrades with arguments (e.g. !r d, !ruby diamond, !gold ruby)
         } else if (cmdId in TIER_MAP && arg1 in TIER_MAP) {
             const primaryTier = TIER_MAP[cmdId];
             const secondaryTier = TIER_MAP[arg1];
             applyWeaponTiers(player, primaryTier, secondaryTier);
 
-        // 3. Single weapon upgrade for currently held weapon (e.g. !r, !d, !g, !stone)
+        // 4. Single weapon upgrade for currently held weapon (e.g. !r, !d, !g, !stone)
         } else if (cmdId in TIER_MAP && cmdId !== "s") {
             const tier = TIER_MAP[cmdId];
             player.weaponXP[player.weaponIndex] = weaponVariants[tier]?.xp ?? 0;
@@ -156,11 +182,11 @@ export default class CommandManager {
                     }
                 }
             }
-        // 4. Bot Spawner (supports counts like !sc 2, !sthb 3, !s 10, etc.)
+        // 5. Bot Spawner (supports counts like !sc 2, !sthb 3, !s 10, etc.)
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             let spawnCount = 1;
             if (parsed[1] && !isNaN(parseInt(parsed[1]))) {
-                spawnCount = Math.max(1, Math.min(50, parseInt(parsed[1])));
+                spawnCount = Math.max(1, Math.min(1000, parseInt(parsed[1])));
             }
 
             const cmdParts = cmdId.split("");
@@ -178,7 +204,7 @@ export default class CommandManager {
                 (bot as any).stone = 999999;
                 (bot as any).food = 999999;
                 (bot as any).points = 999999;
-                (bot as any).items = [0, 3, 6, 10, 15, 17]; // food, walls, spikes, mills, traps, turrets
+                (bot as any).items = [0, 3, 6, 10, 15, 17];
                 (bot as any).lockMove = false;
 
                 // Dummy session for packet safety
@@ -237,7 +263,6 @@ export default class CommandManager {
                             const now = Date.now();
 
                             // 1. TRAP DETECTION & PHYSICAL LOCK
-                            // Check if bot stepped on an active trap
                             let targetTrap: any = (bot as any).trap ?? (bot as any).trapObject;
                             if (!targetTrap) {
                                 targetTrap = ObjectManager.gameObjects.find(obj => 
@@ -249,7 +274,6 @@ export default class CommandManager {
                                 );
                             }
 
-                            // If in trap -> physically lock movement
                             if (targetTrap) {
                                 (bot as any).lockMove = true;
                                 const trapPos = getPos(targetTrap)!;
@@ -259,14 +283,13 @@ export default class CommandManager {
                                 bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? 40;
                                 bot.weapons[0] = bot.weaponIndex = hammerId;
 
-                                // Respect Great Hammer 400ms Cooldown
+                                // Great Hammer 400ms Cooldown
                                 if (now - lastAttackTime >= 400) {
                                     lastAttackTime = now;
 
                                     if (typeof (bot as any).gather === "function") (bot as any).gather();
                                     if (typeof (bot as any).hit === "function") (bot as any).hit(trapAngle);
 
-                                    // Deal hammer structure damage
                                     if (typeof targetTrap.changeHealth === "function") {
                                         if (targetTrap.changeHealth(-250, bot)) {
                                             ObjectManager.remove(targetTrap.sid);
@@ -283,13 +306,12 @@ export default class CommandManager {
                                     }
                                 }
 
-                                // Auto-heal while stuck in trap
                                 if (bot.health < 100 && now - lastHealTime >= 120) {
                                     lastHealTime = now;
                                     bot.health = Math.min(bot.maxHealth || 100, bot.health + 40);
                                     if (typeof (bot as any).changeHealth === "function") (bot as any).changeHealth(40, bot);
                                 }
-                                return; // DO NOT MOVE WHILE TRAPPED
+                                return; // Stuck in trap, cannot move
                             } else {
                                 (bot as any).lockMove = false;
                             }
@@ -324,10 +346,9 @@ export default class CommandManager {
 
                             bot.angle = (bot as any).dir = (bot as any).targetAngle = (bot as any).rotation = (bot as any).viewAngle = angleToEnemy;
 
-                            // 4. MOVEMENT (Only if NOT locked in a trap)
+                            // 4. MOVEMENT (Only if NOT trapped)
                             if (!(bot as any).lockMove) {
                                 if (dist > 130) {
-                                    // Gap Closer Sprint: Booster Hat + Monkey Tail
                                     if (bot.health >= 80) {
                                         bot.skinIndex = (STORE_HAT_MAP as any).BOOSTER_HAT ?? 12;
                                         (bot as any).tailIndex = 11;
@@ -336,7 +357,6 @@ export default class CommandManager {
                                     bot.position.x += Math.cos(angleToEnemy) * moveSpeed;
                                     bot.position.y += Math.sin(angleToEnemy) * moveSpeed;
                                 } else {
-                                    // Melee Range: Bull Helmet + Shadow Wings for maximum burst
                                     if (bot.health >= 80) {
                                         bot.skinIndex = (STORE_HAT_MAP as any).BULL_HELMET ?? 7;
                                         (bot as any).tailIndex = 19;
@@ -349,7 +369,7 @@ export default class CommandManager {
                                 }
                             }
 
-                            // 5. ATTACK COMBOS (Respects Weapon Cooldown)
+                            // 5. ATTACK COMBOS (Respects Katana 300ms Cooldown)
                             const currentWeaponSpeed = getWeaponSpeed(bot.weaponIndex);
                             if (dist <= 160) {
                                 bot.weapons[0] = bot.weaponIndex = katanaId;
@@ -360,7 +380,6 @@ export default class CommandManager {
                                     if (typeof (bot as any).gather === "function") (bot as any).gather(PlayerManager.players);
                                     if (typeof (bot as any).hit === "function") (bot as any).hit(angleToEnemy);
 
-                                    // Direct damage calculation & knockback
                                     if (typeof target.changeHealth === "function") {
                                         const hitDmg = 50; // Bull Helmet + Katana
                                         target.changeHealth(-hitDmg, bot);
@@ -411,7 +430,6 @@ export default class CommandManager {
                                     ObjectManager.gameObjects.push(newObjectData as any);
                                 }
 
-                                // Broadcast to all players so everyone sees the object and collides with it
                                 broadcastToClients(PacketMap.SERVER_TO_CLIENT.LOAD_GAME_OBJECT, [
                                     objSid, placeX, placeY, angleToEnemy, placeScale, 0, placeId, bot.sid
                                 ]);
