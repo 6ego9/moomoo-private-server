@@ -119,7 +119,7 @@ export default class CommandManager {
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             let spawnCount = 1;
             if (parsed[1] && !isNaN(parseInt(parsed[1]))) {
-                spawnCount = Math.max(1, Math.min(30, parseInt(parsed[1])));
+                spawnCount = Math.max(1, Math.min(1000, parseInt(parsed[1])));
             }
 
             const cmdParts = cmdId.split("");
