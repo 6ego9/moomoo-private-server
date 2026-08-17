@@ -37,12 +37,132 @@
     <link href="https://moomoo.io/css/material-icons.css" rel="stylesheet">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
+    
+    <!-- Load msgpack before the game loads -->
+    <script src="https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js"></script>
+
+    <!-- Global Chat Hook & WebSocket Interceptor -->
+    <script>
+        (function () {
+            window.addGlobalChatMessage = function (sender, text) {
+                const chatBox = document.getElementById("globalChatBox");
+                if (!chatBox) return;
+
+                const now = new Date();
+                const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+                const row = document.createElement("div");
+                row.className = "global-chat-row";
+                row.innerHTML = `
+                    <span class="global-chat-time">[${time}]</span>
+                    <span class="global-chat-name">${sender}:</span>
+                    <span class="global-chat-text">${text}</span>
+                `;
+                chatBox.appendChild(row);
+
+                while (chatBox.children.length > 50) {
+                    chatBox.removeChild(chatBox.firstChild);
+                }
+
+                chatBox.scrollTop = chatBox.scrollHeight;
+            };
+
+            // Intercept incoming chat packets from WebSocket
+            const OrigWS = window.WebSocket;
+            window.WebSocket = class extends OrigWS {
+                constructor(...args) {
+                    super(...args);
+                    this.addEventListener("message", (e) => {
+                        try {
+                            if (typeof msgpack !== "undefined") {
+                                let bufferData = null;
+                                if (e.data instanceof ArrayBuffer) {
+                                    bufferData = new Uint8Array(e.data);
+                                } else if (e.data instanceof Uint8Array) {
+                                    bufferData = e.data;
+                                }
+
+                                if (bufferData) {
+                                    const parsed = msgpack.decode(bufferData);
+                                    if (parsed && (parsed[0] === "6" || parsed[0] === 32 || parsed[0] === 6)) {
+                                        const data = parsed[1];
+                                        const sid = data[0];
+                                        const message = data[1];
+                                        window.addGlobalChatMessage("Player " + sid, message);
+                                    }
+                                }
+                            }
+                        } catch (err) {}
+                    });
+                }
+            };
+        })();
+    </script>
+
     <script type="module" crossorigin src="./index-8f264913.js"></script>
     <link rel="modulepreload" crossorigin href="./vendor-b760dbba.js">
 </head>
 
 <body>
+    <!-- TOP-LEFT GLOBAL CHAT CONTAINER -->
+    <div id="globalChatBox"></div>
+
+    <style>
+        #globalChatBox {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 360px;
+            max-height: 220px;
+            background: rgba(15, 18, 26, 0.75);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px;
+            color: #ffffff;
+            font-family: 'Plus Jakarta Sans', 'Hammersmith One', sans-serif;
+            font-size: 13px;
+            z-index: 999999;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            pointer-events: auto;
+            user-select: text;
+        }
+        #globalChatBox::-webkit-scrollbar {
+            width: 4px;
+        }
+        #globalChatBox::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #globalChatBox::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 4px;
+        }
+        .global-chat-row {
+            line-height: 1.4;
+            word-break: break-word;
+        }
+        .global-chat-time {
+            color: #94a3b8;
+            font-size: 11px;
+            margin-right: 6px;
+            font-family: monospace;
+        }
+        .global-chat-name {
+            color: #a78bfa;
+            font-weight: 700;
+            margin-right: 5px;
+        }
+        .global-chat-text {
+            color: #f8fafc;
+        }
+    </style>
+
     <div id="pre-content-container" style="display:none"></div>
     <div id="errorNotification" class="menuCard" style="display:none">
         <div>It looks like MooMoo ran in to a problem. Please try <a target="_blank"
@@ -66,9 +186,9 @@
                         <div id="turnstileWidget"></div><br />
                         <div id="enterGame" class="menuButton disabled"><span>Enter Game</span></div>
                     </div>
-                    <div id="promoImgHolder" class="menuCard" style="display:block;margin-top:16px;padding-bottom:12px"
-                        id="setupCard"><img id="promoImg" 
-                            style="width:300px;cursor:pointer"></div>
+                    <div id="promoImgHolder" class="menuCard" style="display:block;margin-top:16px;padding-bottom:12px">
+                        <img id="promoImg" style="width:300px;cursor:pointer">
+                    </div>
                 </div>
                 <div id="rightCardHolder">
                     <div class="menuCard" id="guideCard">
@@ -167,128 +287,23 @@
         </div>
     </div><canvas id="gameCanvas"></canvas>
     <div id="cdm-zone-end"></div>
-    <script>var loadedScript = false;
 
-    window.FRVR = {
-        bootstrapper: {
-            complete: () => {}
-        },
-        tracker: {
-            levelStart: () => {}
-        }
-    };
+    <script>
+        var loadedScript = false;
+
+        window.FRVR = {
+            bootstrapper: {
+                complete: () => {}
+            },
+            tracker: {
+                levelStart: () => {}
+            }
+        };
 
         window.frvrSdkInitPromise = new Promise((res) => {
-            setTimeout(() => {console.log("waht");res()}, 5e3);
+            setTimeout(() => { console.log("SDK ready"); res(); }, 5e3);
         });
-    <!-- TOP-LEFT GLOBAL CHAT UI -->
-<script src="https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js"></script>
-
-<div id="globalChatBox"></div>
-
-<style>
-    #globalChatBox {
-        position: fixed;
-        top: 20px;
-        left: 20px;
-        width: 360px;
-        max-height: 230px;
-        background: rgba(15, 18, 26, 0.75);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 12px;
-        padding: 12px;
-        color: #ffffff;
-        font-family: 'Plus Jakarta Sans', 'Hammersmith One', sans-serif;
-        font-size: 13px;
-        z-index: 999999;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-        pointer-events: auto;
-        user-select: text;
-    }
-    #globalChatBox::-webkit-scrollbar {
-        width: 4px;
-    }
-    #globalChatBox::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    #globalChatBox::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.25);
-        border-radius: 4px;
-    }
-    .global-chat-row {
-        line-height: 1.4;
-        word-break: break-word;
-    }
-    .global-chat-time {
-        color: #94a3b8;
-        font-size: 11px;
-        margin-right: 6px;
-        font-family: monospace;
-    }
-    .global-chat-name {
-        color: #a78bfa;
-        font-weight: 700;
-        margin-right: 5px;
-    }
-    .global-chat-text {
-        color: #f8fafc;
-    }
-</style>
-
-<script>
-    (function () {
-        const chatBox = document.getElementById("globalChatBox");
-        const MAX_SAVED = 50;
-
-        window.addGlobalChatMessage = function (sender, text) {
-            if (!chatBox) return;
-            const now = new Date();
-            const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-            const row = document.createElement("div");
-            row.className = "global-chat-row";
-            row.innerHTML = `
-                <span class="global-chat-time">[${time}]</span>
-                <span class="global-chat-name">${sender}:</span>
-                <span class="global-chat-text">${text}</span>
-            `;
-            chatBox.appendChild(row);
-
-            while (chatBox.children.length > MAX_SAVED) {
-                chatBox.removeChild(chatBox.firstChild);
-            }
-
-            chatBox.scrollTop = chatBox.scrollHeight;
-        };
-
-        // Hook WebSocket to intercept incoming chat packets (type "6")
-        const OrigWS = window.WebSocket;
-        window.WebSocket = class extends OrigWS {
-            constructor(...args) {
-                super(...args);
-                this.addEventListener("message", (e) => {
-                    try {
-                        if (typeof msgpack !== "undefined" && (e.data instanceof ArrayBuffer || e.data instanceof Uint8Array)) {
-                            const parsed = msgpack.decode(new Uint8Array(e.data));
-                            if (parsed && (parsed[0] === "6" || parsed[0] === 32 || parsed[0] === 6)) {
-                                const data = parsed[1];
-                                const sid = data[0];
-                                const message = data[1];
-                                window.addGlobalChatMessage("Player " + sid, message);
-                            }
-                        }
-                    } catch (err) {}
-                });
-            }
-        };
-    })();
-</script>
+    </script>
 </body>
 
 </html>
