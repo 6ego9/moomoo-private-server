@@ -39,74 +39,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
     
-    <!-- Load msgpack before the game loads -->
-    <script src="https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js"></script>
-
-    <!-- Global Chat Hook & WebSocket Interceptor -->
-    <script>
-        (function () {
-            window.addGlobalChatMessage = function (sender, text) {
-                const chatBox = document.getElementById("globalChatBox");
-                if (!chatBox) return;
-
-                const now = new Date();
-                const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-                const row = document.createElement("div");
-                row.className = "global-chat-row";
-                row.innerHTML = `
-                    <span class="global-chat-time">[${time}]</span>
-                    <span class="global-chat-name">${sender}:</span>
-                    <span class="global-chat-text">${text}</span>
-                `;
-                chatBox.appendChild(row);
-
-                while (chatBox.children.length > 50) {
-                    chatBox.removeChild(chatBox.firstChild);
-                }
-
-                chatBox.scrollTop = chatBox.scrollHeight;
-            };
-
-            // Intercept incoming chat packets from WebSocket
-            const OrigWS = window.WebSocket;
-            window.WebSocket = class extends OrigWS {
-                constructor(...args) {
-                    super(...args);
-                    this.addEventListener("message", (e) => {
-                        try {
-                            if (typeof msgpack !== "undefined") {
-                                let bufferData = null;
-                                if (e.data instanceof ArrayBuffer) {
-                                    bufferData = new Uint8Array(e.data);
-                                } else if (e.data instanceof Uint8Array) {
-                                    bufferData = e.data;
-                                }
-
-                                if (bufferData) {
-                                    const parsed = msgpack.decode(bufferData);
-                                    if (parsed && (parsed[0] === "6" || parsed[0] === 32 || parsed[0] === 6)) {
-                                        const data = parsed[1];
-                                        const sid = data[0];
-                                        const message = data[1];
-                                        window.addGlobalChatMessage("Player " + sid, message);
-                                    }
-                                }
-                            }
-                        } catch (err) {}
-                    });
-                }
-            };
-        })();
-    </script>
-
     <script type="module" crossorigin src="./index-8f264913.js"></script>
     <link rel="modulepreload" crossorigin href="./vendor-b760dbba.js">
 </head>
 
 <body>
     <!-- TOP-LEFT GLOBAL CHAT CONTAINER -->
-    <div id="globalChatBox"></div>
+    <div id="globalChatBox">
+        <div class="global-chat-row" style="color: #64748b; font-size: 11px; font-style: italic;">
+            [System] Global Chat ready
+        </div>
+    </div>
 
     <style>
         #globalChatBox {
@@ -162,6 +105,31 @@
             color: #f8fafc;
         }
     </style>
+
+    <script>
+        window.addGlobalChatMessage = function (sender, text) {
+            const chatBox = document.getElementById("globalChatBox");
+            if (!chatBox) return;
+
+            const now = new Date();
+            const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const row = document.createElement("div");
+            row.className = "global-chat-row";
+            row.innerHTML = `
+                <span class="global-chat-time">[${time}]</span>
+                <span class="global-chat-name">${sender}:</span>
+                <span class="global-chat-text">${text}</span>
+            `;
+            chatBox.appendChild(row);
+
+            while (chatBox.children.length > 50) {
+                chatBox.removeChild(chatBox.firstChild);
+            }
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+        };
+    </script>
 
     <div id="pre-content-container" style="display:none"></div>
     <div id="errorNotification" class="menuCard" style="display:none">
