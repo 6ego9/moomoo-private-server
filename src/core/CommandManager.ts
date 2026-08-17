@@ -17,10 +17,10 @@ export default class CommandManager {
 
         if (cmdId === "n" || cmdId === "nearest") {
             const nearest = PlayerManager.players
-                .filter(other => other.isAlive && other.sid !== player.sid)
+                .filter(other => other && other.isAlive && other.sid !== player.sid && other.position)
                 .sort((a, b) => getDistSq(a.position, player.position) - getDistSq(b.position, player.position))[0];
 
-            if (nearest) {
+            if (nearest && nearest.position) {
                 player.position.x = nearest.position.x;
                 player.position.y = nearest.position.y;
             }
@@ -44,17 +44,25 @@ export default class CommandManager {
 
             if (!targetArg || targetArg.toLowerCase() === "all") {
                 // Kill all active bots
-                const bots = PlayerManager.players.filter(p => p.isAI && p.isAlive);
+                const bots = PlayerManager.players.filter(p => p && p.isAI && p.isAlive);
                 for (const bot of bots) {
-                    bot.kill(player);
+                    try {
+                        bot.kill(player);
+                    } catch (e) {
+                        bot.isAlive = false;
+                    }
                 }
             } else {
-                // Kill a specific bot by its SID / ID
+                // Kill specific bot by SID / ID
                 const targetSid = parseInt(targetArg);
-                const targetBot = PlayerManager.players.find(p => p.sid === targetSid && p.isAI && p.isAlive);
+                const targetBot = PlayerManager.players.find(p => p && p.sid === targetSid && p.isAI && p.isAlive);
 
                 if (targetBot) {
-                    targetBot.kill(player);
+                    try {
+                        targetBot.kill(player);
+                    } catch (e) {
+                        targetBot.isAlive = false;
+                    }
                 }
             }
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
@@ -63,21 +71,36 @@ export default class CommandManager {
             bot.position.y = player.position.y + randInt(-500, 500);
             bot.isAI = true;
 
+            // 1. Prevent packet crashes: Register dummy session for the bot
+            const dummySession = {
+                socketId: bot.socketId,
+                send: () => {},
+                close: () => {},
+                player: bot,
+                socket: { readyState: 1, send: () => {} }
+            };
+
+            if ((SessionManager as any).sessions instanceof Map) {
+                (SessionManager as any).sessions.set(bot.socketId, dummySession);
+            } else if ((SessionManager as any).sessions) {
+                (SessionManager as any).sessions[bot.socketId] = dummySession;
+            }
+
             const cmdParts = cmdId.split("");
 
-            // 1. Hat handling (t = Tank Gear, ss = Soldier Helmet)
+            // 2. Hat handling (t = Tank Gear, ss = Soldier Helmet)
             if (cmdParts.includes("t")) {
                 bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? (STORE_HAT_MAP as any).TANK_HELMET ?? (STORE_HAT_MAP as any).TANK ?? 40;
             } else if (cmdParts.filter(e => e === "s").length >= 2) {
                 bot.skinIndex = STORE_HAT_MAP.SOLDIER_HELMET;
             }
 
-            // 2. Heal handling (h = Heal)
+            // 3. Heal handling (h = Heal)
             if (cmdParts.includes("h")) {
                 bot.aiSettings.heal = true;
             }
 
-            // 3. Hammer & Auto-Aim Breaker (b = Breaker)
+            // 4. Hammer & Auto-Aim Breaker (b = Breaker)
             if (cmdParts.includes("b")) {
                 const hammerId = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
                 bot.weapons[0] = bot.weaponIndex = hammerId;
@@ -87,33 +110,57 @@ export default class CommandManager {
                 (bot as any).isHitting = true;
                 (bot as any).gathering = true;
 
-                // Normal hammer attack cooldown (400ms for Great Hammer, 300ms for Tool Hammer)
+                // 400ms normal Great Hammer attack cooldown
                 const hammerCooldown = hammerId === (WEAPON_ID_MAP as any).TOOL_HAMMER ? 300 : 400;
 
                 const attackInterval = setInterval(() => {
-                    if (!bot.isAlive) {
-                        clearInterval(attackInterval);
-                        return;
-                    }
+                    try {
+                        // Check if bot is dead or removed from the server
+                        if (!bot || !bot.isAlive || !PlayerManager.players.some(p => p.sid === bot.sid)) {
+                            clearInterval(attackInterval);
+                            
+                            // Cleanup dummy session
+                            if ((SessionManager as any).sessions instanceof Map) {
+                                (SessionManager as any).sessions.delete(bot.socketId);
+                            } else if ((SessionManager as any).sessions) {
+                                delete (SessionManager as any).sessions[bot.socketId];
+                            }
+                            return;
+                        }
 
-                    // Find nearest living breakable object
-                    const nearestObj = ObjectManager.gameObjects
-                        .filter(obj => (obj.health === undefined || obj.health > 0) && (obj as any).isAlive !== false)
-                        .sort((a, b) => getDistSq(a.position, bot.position) - getDistSq(b.position, bot.position))[0];
+                        if (!bot.position) return;
 
-                    // Auto-aim towards the target object
-                    if (nearestObj) {
-                        const targetPos = nearestObj.position ?? (nearestObj as any);
-                        bot.angle = Math.atan2(targetPos.y - bot.position.y, targetPos.x - bot.position.x);
-                    }
+                        // Safely filter living breakable objects
+                        const validObjects = ObjectManager.gameObjects.filter(
+                            obj => obj && 
+                                   obj.position && 
+                                   typeof obj.position.x === "number" && 
+                                   typeof obj.position.y === "number" && 
+                                   (obj.health === undefined || obj.health > 0) && 
+                                   (obj as any).isAlive !== false
+                        );
 
-                    // Trigger weapon swing in the auto-aimed direction
-                    if (typeof (bot as any).hit === "function") {
-                        (bot as any).hit(bot.angle ?? 0);
-                    } else if (typeof (bot as any).attack === "function") {
-                        (bot as any).attack(bot.angle ?? 0);
-                    } else if (typeof (bot as any).gather === "function") {
-                        (bot as any).gather();
+                        if (validObjects.length > 0) {
+                            const nearestObj = validObjects.sort(
+                                (a, b) => getDistSq(a.position, bot.position) - getDistSq(b.position, bot.position)
+                            )[0];
+
+                            if (nearestObj && nearestObj.position) {
+                                bot.angle = Math.atan2(nearestObj.position.y - bot.position.y, nearestObj.position.x - bot.position.x);
+                            }
+                        }
+
+                        // Trigger weapon swing
+                        if (typeof (bot as any).hit === "function") {
+                            (bot as any).hit(bot.angle ?? 0);
+                        } else if (typeof (bot as any).attack === "function") {
+                            (bot as any).attack(bot.angle ?? 0);
+                        } else if (typeof (bot as any).gather === "function") {
+                            (bot as any).gather();
+                        }
+                    } catch (err) {
+                        // Prevent unhandled errors from crashing the server
+                        console.error("Bot loop error (safely caught):", err);
                     }
                 }, hammerCooldown);
             } else {
@@ -133,7 +180,7 @@ export default class CommandManager {
         } else if (cmdId === "tp") {
             const victim = PlayerManager.players.find(e => e.sid === parseInt(parsed[1]));
 
-            if (victim) {
+            if (victim && victim.position) {
                 player.position.x = victim.position.x;
                 player.position.y = victim.position.y;
             }
