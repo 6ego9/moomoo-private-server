@@ -39,21 +39,39 @@ export default class CommandManager {
             player.weaponXP[player.weaponIndex] = 0;
         } else if (cmdId === "k" || cmdId === "kill") {
             player.kill(player);
-        } else if (cmdId === "spawn" || cmdId === "s" || cmdId === "ss" || cmdId === "sh" || cmdId === "ssh") {
+        } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             const bot = PlayerManager.create(randString(), "Bot");
             bot.position.x = player.position.x + randInt(-500, 500);
             bot.position.y = player.position.y + randInt(-500, 500);
-            bot.weapons[0] = bot.weaponIndex = WEAPON_ID_MAP.POLEARM;
             bot.isAI = true;
 
             const cmdParts = cmdId.split("");
 
-            if (cmdParts.filter(e => e === "s").length >= 2) {
+            // 1. Hat handling (t = Tank Gear, ss = Soldier Helmet)
+            if (cmdParts.includes("t")) {
+                bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? (STORE_HAT_MAP as any).TANK_HELMET ?? (STORE_HAT_MAP as any).TANK ?? 40;
+            } else if (cmdParts.filter(e => e === "s").length >= 2) {
                 bot.skinIndex = STORE_HAT_MAP.SOLDIER_HELMET;
             }
 
+            // 2. Heal handling (h = Heal)
             if (cmdParts.includes("h")) {
                 bot.aiSettings.heal = true;
+            }
+
+            // 3. Weapon & Attack handling (b = Breaker hammer + continuous hit)
+            if (cmdParts.includes("b")) {
+                bot.weapons[0] = bot.weaponIndex = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
+                
+                // Enable bot hitting/attacking
+                (bot.aiSettings as any).hit = true;
+                (bot.aiSettings as any).attack = true;
+                (bot.aiSettings as any).hitting = true;
+                (bot.aiSettings as any).breaker = true;
+                (bot as any).autoAttack = true;
+                (bot as any).isHitting = true;
+            } else {
+                bot.weapons[0] = bot.weaponIndex = WEAPON_ID_MAP.POLEARM;
             }
         } else if (cmdId === "reset" || cmdId === "re") {
             const session = SessionManager.get(player.socketId)!;
