@@ -33,7 +33,6 @@ const TIER_MAP: Record<string, number> = {
     s: 0, stone: 0
 };
 
-// Helper function to apply upgrade tiers to primary and secondary weapon IDs
 function applyWeaponTiers(player: Player, primaryTier: number, secondaryTier: number) {
     const primaryId = player.weapons[0] !== undefined ? player.weapons[0] : player.weaponIndex;
     const secondaryId = player.weapons[1];
@@ -116,7 +115,7 @@ export default class CommandManager {
                     }
                 }
             }
-        // 4. Bot Spawner (supports !sc, !sthb, !ssh, !s, etc. and spawn count numbers e.g. !sc 2, !sthb 3)
+        // 4. Bot Spawner (supports count arguments like !sc 2, !sthb 3, !s 10, etc.)
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             let spawnCount = 1;
             if (parsed[1] && !isNaN(parseInt(parsed[1]))) {
@@ -129,11 +128,18 @@ export default class CommandManager {
             for (let n = 0; n < spawnCount; n++) {
                 const botName = isCombatBot ? ("CombatBot" + (spawnCount > 1 ? `_${n + 1}` : "")) : "Bot";
                 const bot = PlayerManager.create(randString(), botName);
-                bot.position.x = player.position.x + randInt(-350, 350);
-                bot.position.y = player.position.y + randInt(-350, 350);
+                bot.position.x = player.position.x + randInt(-300, 300);
+                bot.position.y = player.position.y + randInt(-300, 300);
                 bot.isAI = true;
 
-                // Dummy session for packet safety
+                // Grant infinite building resources so the bot can place traps/spikes
+                (bot as any).wood = 999999;
+                (bot as any).stone = 999999;
+                (bot as any).food = 999999;
+                (bot as any).points = 999999;
+                (bot as any).items = [0, 3, 6, 10, 15, 17]; // food, walls, spikes, mills, traps, turrets
+
+                // Dummy session to avoid packet crashes
                 const dummySession = {
                     socketId: bot.socketId,
                     send: () => {},
@@ -148,15 +154,15 @@ export default class CommandManager {
                     (SessionManager as any).sessions[bot.socketId] = dummySession;
                 }
 
-                
-                //  COMBAT BOT LOGIC (!sc)
-                
+                // ========================================================
+                //  COMBAT BOT AI LOOP (!sc)
+                // ========================================================
                 if (isCombatBot) {
-                    // Equip Ruby Katana & Great Hammer
                     const katanaId = (WEAPON_ID_MAP as any).KATANA ?? (WEAPON_ID_MAP as any).POLEARM ?? 4;
                     const hammerId = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? 10;
-                    bot.weapons[0] = bot.weaponIndex = katanaId;
+                    bot.weapons[0] = katanaId;
                     bot.weapons[1] = hammerId;
+                    bot.weaponIndex = katanaId;
 
                     if (bot.weaponXP) {
                         bot.weaponXP[katanaId] = weaponVariants[3]?.xp ?? 0;
@@ -164,12 +170,12 @@ export default class CommandManager {
                     }
 
                     bot.skinIndex = (STORE_HAT_MAP as any).BOOSTER_HAT ?? 12;
-                    (bot as any).tailIndex = 11; // Monkey tail for speed
+                    (bot as any).tailIndex = 11; // Monkey Tail
 
                     let lastAttackTime = 0;
                     let lastPlaceTime = 0;
                     let lastHealTime = 0;
-                    let strafeDirection = 1;
+                    let strafeDir = 1;
 
                     const combatInterval = setInterval(() => {
                         try {
@@ -188,11 +194,11 @@ export default class CommandManager {
 
                             const now = Date.now();
 
-                            // 1. TRAP ESCAPING (Auto-Break)
+                            // 1. TRAP ESCAPING: Auto-Break Traps with Hammer + Tank Gear
                             let targetTrap: any = (bot as any).trap ?? (bot as any).trapObject ?? (bot as any).trapped;
                             if (!targetTrap) {
                                 targetTrap = ObjectManager.gameObjects.find(obj => 
-                                    obj && obj.id === 15 && getPos(obj) && getDistSq(getPos(obj)!, botPos) <= 60 * 60 && (obj as any).health > 0
+                                    obj && obj.id === 15 && getPos(obj) && getDistSq(getPos(obj)!, botPos) <= 65 * 65 && (obj as any).health > 0
                                 );
                             }
 
@@ -200,15 +206,27 @@ export default class CommandManager {
                                 const trapPos = getPos(targetTrap)!;
                                 const trapAngle = Math.atan2(trapPos.y - botPos.y, trapPos.x - botPos.x);
 
-                                bot.angle = (bot as any).targetAngle = (bot as any).dir = (bot as any).rotation = (bot as any).viewAngle = trapAngle;
+                                bot.angle = (bot as any).dir = (bot as any).targetAngle = (bot as any).rotation = (bot as any).viewAngle = trapAngle;
                                 bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? 40;
                                 bot.weapons[0] = bot.weaponIndex = hammerId;
 
-                                if (now - lastAttackTime >= 350) {
+                                if (now - lastAttackTime >= 300) {
                                     lastAttackTime = now;
+
+                                    // Trigger swing
+                                    if (typeof (bot as any).gather === "function") (bot as any).gather();
                                     if (typeof (bot as any).hit === "function") (bot as any).hit(trapAngle);
+
+                                    // Deal direct structure damage to destroy trap
+                                    if (typeof targetTrap.changeHealth === "function") {
+                                        if (targetTrap.changeHealth(-250, bot)) ObjectManager.remove(targetTrap.sid);
+                                    } else {
+                                        targetTrap.health = (targetTrap.health || 500) - 250;
+                                        if (targetTrap.health <= 0) ObjectManager.remove(targetTrap.sid);
+                                    }
                                 }
 
+                                // Auto heal while trapped
                                 if (bot.health < 100) {
                                     bot.health = Math.min(bot.maxHealth || 100, bot.health + 40);
                                     if (typeof (bot as any).changeHealth === "function") (bot as any).changeHealth(40, bot);
@@ -216,10 +234,10 @@ export default class CommandManager {
                                 return;
                             }
 
-                            // 2. AUTO-HEAL (Soldier Helmet Swap)
-                            if (bot.health < 80) {
+                            // 2. AUTO-HEAL: Soldier Helmet + Fast Food Healing
+                            if (bot.health < 85) {
                                 bot.skinIndex = STORE_HAT_MAP.SOLDIER_HELMET ?? 6;
-                                if (now - lastHealTime >= 120) {
+                                if (now - lastHealTime >= 100) {
                                     lastHealTime = now;
                                     bot.health = Math.min(bot.maxHealth || 100, bot.health + 40);
                                     if (typeof (bot as any).changeHealth === "function") {
@@ -228,7 +246,7 @@ export default class CommandManager {
                                 }
                             }
 
-                            // 3. TARGETING (Find Closest Enemy Player)
+                            // 3. TARGETING: Find Closest Enemy Player
                             const target = PlayerManager.players
                                 .filter(p => p && p.isAlive && p.sid !== bot.sid && !p.isAI && getPos(p))
                                 .sort((a, b) => getDistSq(getPos(a)!, botPos) - getDistSq(getPos(b)!, botPos))[0]
@@ -244,51 +262,80 @@ export default class CommandManager {
                             const dist = Math.hypot(dx, dy);
                             const angleToEnemy = Math.atan2(dy, dx);
 
-                            bot.angle = (bot as any).targetAngle = (bot as any).dir = (bot as any).rotation = (bot as any).viewAngle = angleToEnemy;
+                            bot.angle = (bot as any).dir = (bot as any).targetAngle = (bot as any).rotation = (bot as any).viewAngle = angleToEnemy;
 
-                            // 4. MOVEMENT & HAT SELECTION
+                            // 4. MOVEMENT & HAT COMBOS
                             if (dist > 130) {
-                                // Pursuit Mode: Booster Hat + Monkey Tail
-                                if (bot.health >= 80) {
+                                // Gap Closer Sprint: Booster Hat + Monkey Tail
+                                if (bot.health >= 85) {
                                     bot.skinIndex = (STORE_HAT_MAP as any).BOOSTER_HAT ?? 12;
-                                    (bot as any).tailIndex = 11; // Monkey Tail
+                                    (bot as any).tailIndex = 11;
                                 }
-                                const moveSpeed = 8.0;
+                                const moveSpeed = 9.0;
                                 bot.position.x += Math.cos(angleToEnemy) * moveSpeed;
                                 bot.position.y += Math.sin(angleToEnemy) * moveSpeed;
                             } else {
-                                // Melee Combat Orbit / Strafe
-                                if (bot.health >= 80) {
+                                // Combat Range: Bull Helmet + Shadow Wings for maximum strike damage
+                                if (bot.health >= 85) {
                                     bot.skinIndex = (STORE_HAT_MAP as any).BULL_HELMET ?? 7;
-                                    (bot as any).tailIndex = 19; // Shadow Wings
+                                    (bot as any).tailIndex = 19;
                                 }
-                                const orbitAngle = angleToEnemy + (Math.PI / 2 * 0.4 * strafeDirection);
+                                // Combat Orbit to avoid straight line counter-spikes
+                                const orbitAngle = angleToEnemy + (Math.PI / 2 * 0.4 * strafeDir);
                                 const strafeSpeed = 4.5;
                                 bot.position.x += Math.cos(orbitAngle) * strafeSpeed;
                                 bot.position.y += Math.sin(orbitAngle) * strafeSpeed;
-                                if (Math.random() < 0.05) strafeDirection *= -1;
+                                if (Math.random() < 0.05) strafeDir *= -1;
                             }
 
-                            // 5. ATTACK COMBOS (Melee Strike)
-                            if (dist <= 150) {
+                            // 5. ATTACK COMBOS & MELEE STRIKES
+                            if (dist <= 160) {
                                 bot.weapons[0] = bot.weaponIndex = katanaId;
-                                if (now - lastAttackTime >= 300) {
+
+                                // Register attack flags
+                                (bot as any).gathering = 1;
+                                (bot as any).mouseState = 1;
+                                (bot as any).autoGather = 1;
+                                if ((bot as any).reloads) (bot as any).reloads[bot.weaponIndex] = 0;
+
+                                if (now - lastAttackTime >= 280) {
                                     lastAttackTime = now;
-                                    if (typeof (bot as any).hit === "function") {
-                                        (bot as any).hit(angleToEnemy);
+
+                                    // Invoke weapon swing and damage methods
+                                    if (typeof (bot as any).gather === "function") (bot as any).gather(PlayerManager.players);
+                                    if (typeof (bot as any).hit === "function") (bot as any).hit(angleToEnemy);
+
+                                    // Direct melee hit + knockback guarantee
+                                    if (typeof target.changeHealth === "function") {
+                                        const hitDmg = 65; // Bull Helmet + Ruby Katana damage
+                                        target.changeHealth(-hitDmg, bot);
+
+                                        // Apply knockback
+                                        if (typeof (target as any).xVel === "number") {
+                                            (target as any).xVel += 0.5 * Math.cos(angleToEnemy);
+                                            (target as any).yVel += 0.5 * Math.sin(angleToEnemy);
+                                        }
                                     }
                                 }
                             }
 
-                            // 6. SMART STRUCTURE PLACEMENT (Spikes & Traps)
-                            if (dist <= 220 && now - lastPlaceTime >= 700) {
+                            // 6. OFFENSIVE PLACEMENT (Spikes & Pit Traps)
+                            if (dist <= 200 && now - lastPlaceTime >= 650) {
                                 lastPlaceTime = now;
-                                const placeDist = 65;
+                                const isTrap = Math.random() < 0.45;
+                                const placeId = isTrap ? 15 : 6;
+                                const placeDist = 60;
                                 const placeX = botPos.x + Math.cos(angleToEnemy) * placeDist;
                                 const placeY = botPos.y + Math.sin(angleToEnemy) * placeDist;
-                                const isTrap = Math.random() < 0.4;
-                                const placeId = isTrap ? 15 : 6;
 
+                                // Place using buildItem if available
+                                if (typeof (bot as any).buildItem === "function") {
+                                    try {
+                                        (bot as any).buildItem({ id: placeId, scale: 45, placeOffset: 0 });
+                                    } catch (e) {}
+                                }
+
+                                // Add to ObjectManager
                                 if (typeof (ObjectManager as any).add === "function") {
                                     try {
                                         (ObjectManager as any).add(
@@ -298,7 +345,7 @@ export default class CommandManager {
                                             angleToEnemy,
                                             45,
                                             0,
-                                            { id: placeId, health: 500, scale: 45 },
+                                            { id: placeId, health: 500, scale: 45, dmg: isTrap ? 0 : 35 },
                                             true,
                                             bot
                                         );
@@ -310,9 +357,9 @@ export default class CommandManager {
                         }
                     }, 50);
 
-                
-                //  STANDARD / BREAKER BOT LOGIC (!s, !sthb, etc.)
-                
+                // ========================================================
+                //  STANDARD / BREAKER BOT AI LOOP (!sthb, !s, etc.)
+                // ========================================================
                 } else {
                     if (cmdParts.includes("t")) {
                         bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? (STORE_HAT_MAP as any).TANK_HELMET ?? (STORE_HAT_MAP as any).TANK ?? 40;
@@ -331,7 +378,8 @@ export default class CommandManager {
                         (bot.aiSettings as any).hit = true;
                         (bot as any).isAttacking = true;
                         (bot as any).isHitting = true;
-                        (bot as any).gathering = true;
+                        (bot as any).gathering = 1;
+                        (bot as any).mouseState = 1;
 
                         const hammerCooldown = hammerId === (WEAPON_ID_MAP as any).TOOL_HAMMER ? 300 : 400;
 
@@ -351,10 +399,12 @@ export default class CommandManager {
                                 if (!botPos) return;
 
                                 let targetPos: { x: number; y: number } | null = null;
+                                let targetObjRef: any = null;
 
                                 const trap = (bot as any).trap ?? (bot as any).trapObject ?? (bot as any).trapped;
                                 if (trap && (trap.health === undefined || trap.health > 0) && trap.isAlive !== false) {
                                     targetPos = getPos(trap);
+                                    targetObjRef = trap;
                                 }
 
                                 if (!targetPos) {
@@ -371,6 +421,7 @@ export default class CommandManager {
                                         if (dSq < minDistanceSq) {
                                             minDistanceSq = dSq;
                                             targetPos = objPos;
+                                            targetObjRef = obj;
                                         }
                                     }
                                 }
@@ -381,23 +432,30 @@ export default class CommandManager {
 
                                     if (dx !== 0 || dy !== 0) {
                                         const targetAngle = Math.atan2(dy, dx);
-                                        bot.angle = targetAngle;
-                                        (bot as any).targetAngle = targetAngle;
-                                        (bot as any).dir = targetAngle;
-                                        (bot as any).rotation = targetAngle;
-                                        (bot as any).viewAngle = targetAngle;
+                                        bot.angle = (bot as any).dir = (bot as any).targetAngle = (bot as any).rotation = (bot as any).viewAngle = targetAngle;
+                                    }
+
+                                    // Trigger hit & gather
+                                    if (typeof (bot as any).gather === "function") (bot as any).gather();
+                                    if (typeof (bot as any).hit === "function") (bot as any).hit(bot.angle ?? 0);
+
+                                    // Direct structure damage to smash object
+                                    if (targetObjRef) {
+                                        if (typeof targetObjRef.changeHealth === "function") {
+                                            if (targetObjRef.changeHealth(-250, bot)) ObjectManager.remove(targetObjRef.sid);
+                                        } else {
+                                            targetObjRef.health = (targetObjRef.health || 500) - 250;
+                                            if (targetObjRef.health <= 0) ObjectManager.remove(targetObjRef.sid);
+                                        }
                                     }
                                 }
 
-                                if (typeof (bot as any).hit === "function") {
-                                    (bot as any).hit(bot.angle ?? 0);
-                                } else if (typeof (bot as any).attack === "function") {
-                                    (bot as any).attack(bot.angle ?? 0);
-                                } else if (typeof (bot as any).gather === "function") {
-                                    (bot as any).gather();
+                                // Auto heal
+                                if (bot.health < 100) {
+                                    bot.health = Math.min(bot.maxHealth || 100, bot.health + 40);
                                 }
                             } catch (err) {
-                                console.error("Bot loop error:", err);
+                                console.error("Breaker bot loop error:", err);
                             }
                         }, hammerCooldown);
                     } else {
