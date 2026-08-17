@@ -33,6 +33,27 @@ const TIER_MAP: Record<string, number> = {
     s: 0, stone: 0
 };
 
+// Helper function to apply upgrade tiers to primary and secondary weapon IDs
+function applyWeaponTiers(player: Player, primaryTier: number, secondaryTier: number) {
+    const primaryId = player.weapons[0] !== undefined ? player.weapons[0] : player.weaponIndex;
+    const secondaryId = player.weapons[1];
+
+    if (primaryId !== undefined) {
+        player.weaponXP[primaryId] = weaponVariants[primaryTier]?.xp ?? 0;
+    }
+
+    if (secondaryId !== undefined) {
+        player.weaponXP[secondaryId] = weaponVariants[secondaryTier]?.xp ?? 0;
+    }
+
+    // Ensure the currently held weapon reflects the upgrade immediately
+    if (secondaryId !== undefined && player.weaponIndex === secondaryId) {
+        player.weaponXP[player.weaponIndex] = weaponVariants[secondaryTier]?.xp ?? 0;
+    } else {
+        player.weaponXP[player.weaponIndex] = weaponVariants[primaryTier]?.xp ?? 0;
+    }
+}
+
 export default class CommandManager {
     static process(player: Player, msg: string) {
         const parsed = msg.slice(1).split(" ");
@@ -57,29 +78,19 @@ export default class CommandManager {
         } else if (cmdId.length === 2 && cmdId !== "ss" && cmdId[0] in TIER_MAP && cmdId[1] in TIER_MAP) {
             const primaryTier = TIER_MAP[cmdId[0]];
             const secondaryTier = TIER_MAP[cmdId[1]];
+            applyWeaponTiers(player, primaryTier, secondaryTier);
 
-            player.weaponXP[0] = weaponVariants[primaryTier]?.xp ?? 0;
-            player.weaponXP[1] = weaponVariants[secondaryTier]?.xp ?? 0;
-
-            const session = SessionManager.get(player.socketId);
-            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
         // 2. Dual weapon upgrades with arguments (e.g. !r d, !ruby diamond, !gold ruby)
         } else if (cmdId in TIER_MAP && arg1 in TIER_MAP) {
             const primaryTier = TIER_MAP[cmdId];
             const secondaryTier = TIER_MAP[arg1];
+            applyWeaponTiers(player, primaryTier, secondaryTier);
 
-            player.weaponXP[0] = weaponVariants[primaryTier]?.xp ?? 0;
-            player.weaponXP[1] = weaponVariants[secondaryTier]?.xp ?? 0;
-
-            const session = SessionManager.get(player.socketId);
-            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
         // 3. Single weapon upgrade for currently held weapon (e.g. !r, !d, !g, !stone)
         } else if (cmdId in TIER_MAP && cmdId !== "s") {
             const tier = TIER_MAP[cmdId];
             player.weaponXP[player.weaponIndex] = weaponVariants[tier]?.xp ?? 0;
 
-            const session = SessionManager.get(player.socketId);
-            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
         } else if (cmdId === "k" || cmdId === "kill") {
             player.kill(player);
         } else if (cmdId === "kb" || cmdId === "killbot" || cmdId === "killbots") {
