@@ -10,10 +10,34 @@ import randString from "@utils/randString";
 import { STORE_HAT_MAP } from "@utils/store";
 import ObjectManager from "@core/ObjectManager";
 
+// Helper function to safely extract (x, y) coordinates from any entity, player, object, or trap
+function getPos(entity: any): { x: number; y: number } | null {
+    if (!entity) return null;
+    if (entity.position && typeof entity.position.x === "number" && typeof entity.position.y === "number") {
+        return entity.position;
+    }
+    if (entity.pos && typeof entity.pos.x === "number" && typeof entity.pos.y === "number") {
+        return entity.pos;
+    }
+    if (typeof entity.x === "number" && typeof entity.y === "number") {
+        return { x: entity.x, y: entity.y };
+    }
+    return null;
+}
+
+// Tier mapping: r = Ruby (3), d = Diamond (2), g = Gold (1), s = Stone (0)
+const TIER_MAP: Record<string, number> = {
+    r: 3, ruby: 3,
+    d: 2, dia: 2, diamond: 2,
+    g: 1, gold: 1,
+    s: 0, stone: 0
+};
+
 export default class CommandManager {
     static process(player: Player, msg: string) {
         const parsed = msg.slice(1).split(" ");
-        const cmdId = parsed[0];
+        const cmdId = parsed[0].toLowerCase();
+        const arg1 = parsed[1] ? parsed[1].toLowerCase() : "";
 
         if (cmdId === "n" || cmdId === "nearest") {
             const nearest = PlayerManager.players
@@ -29,14 +53,33 @@ export default class CommandManager {
             for (const sid of sids) {
                 ObjectManager.remove(sid);
             }
-        } else if (cmdId === "r" || cmdId === "ruby") {
-            player.weaponXP[player.weaponIndex] = weaponVariants[3].xp;
-        } else if (cmdId === "d" || cmdId === "dia") {
-            player.weaponXP[player.weaponIndex] = weaponVariants[2].xp;
-        } else if (cmdId === "g" || cmdId === "gold") {
-            player.weaponXP[player.weaponIndex] = weaponVariants[1].xp;
-        } else if (cmdId === "stone") {
-            player.weaponXP[player.weaponIndex] = 0;
+        // 1. Dual weapon upgrade combos (e.g. !rd, !dr, !rg, !gr, !dg, !gd, !rr, !dd, !gg, !rs, etc.)
+        } else if (cmdId.length === 2 && cmdId !== "ss" && cmdId[0] in TIER_MAP && cmdId[1] in TIER_MAP) {
+            const primaryTier = TIER_MAP[cmdId[0]];
+            const secondaryTier = TIER_MAP[cmdId[1]];
+
+            player.weaponXP[0] = weaponVariants[primaryTier]?.xp ?? 0;
+            player.weaponXP[1] = weaponVariants[secondaryTier]?.xp ?? 0;
+
+            const session = SessionManager.get(player.socketId);
+            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
+        // 2. Dual weapon upgrades with arguments (e.g. !r d, !ruby diamond, !gold ruby)
+        } else if (cmdId in TIER_MAP && arg1 in TIER_MAP) {
+            const primaryTier = TIER_MAP[cmdId];
+            const secondaryTier = TIER_MAP[arg1];
+
+            player.weaponXP[0] = weaponVariants[primaryTier]?.xp ?? 0;
+            player.weaponXP[1] = weaponVariants[secondaryTier]?.xp ?? 0;
+
+            const session = SessionManager.get(player.socketId);
+            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
+        // 3. Single weapon upgrade for currently held weapon (e.g. !r, !d, !g, !stone)
+        } else if (cmdId in TIER_MAP && cmdId !== "s") {
+            const tier = TIER_MAP[cmdId];
+            player.weaponXP[player.weaponIndex] = weaponVariants[tier]?.xp ?? 0;
+
+            const session = SessionManager.get(player.socketId);
+            session?.send(PacketMap.SERVER_TO_CLIENT.UPDATE_ITEMS, player.weapons, true);
         } else if (cmdId === "k" || cmdId === "kill") {
             player.kill(player);
         } else if (cmdId === "kb" || cmdId === "killbot" || cmdId === "killbots") {
@@ -53,7 +96,7 @@ export default class CommandManager {
                     }
                 }
             } else {
-                // Kill specific bot by SID / ID
+                // Kill specific bot by ID
                 const targetSid = parseInt(targetArg);
                 const targetBot = PlayerManager.players.find(p => p && p.sid === targetSid && p.isAI && p.isAlive);
 
@@ -71,7 +114,7 @@ export default class CommandManager {
             bot.position.y = player.position.y + randInt(-500, 500);
             bot.isAI = true;
 
-            // 1. Prevent packet crashes: Register dummy session for the bot
+            // Dummy session to prevent packet send crashes
             const dummySession = {
                 socketId: bot.socketId,
                 send: () => {},
@@ -88,19 +131,19 @@ export default class CommandManager {
 
             const cmdParts = cmdId.split("");
 
-            // 2. Hat handling (t = Tank Gear, ss = Soldier Helmet)
+            // Hat handling (t = Tank Gear, ss = Soldier Helmet)
             if (cmdParts.includes("t")) {
                 bot.skinIndex = (STORE_HAT_MAP as any).TANK_GEAR ?? (STORE_HAT_MAP as any).TANK_HELMET ?? (STORE_HAT_MAP as any).TANK ?? 40;
             } else if (cmdParts.filter(e => e === "s").length >= 2) {
                 bot.skinIndex = STORE_HAT_MAP.SOLDIER_HELMET;
             }
 
-            // 3. Heal handling (h = Heal)
+            // Heal handling (h = Heal)
             if (cmdParts.includes("h")) {
                 bot.aiSettings.heal = true;
             }
 
-            // 4. Hammer & Auto-Aim Breaker (b = Breaker)
+            // Hammer & Auto-Aim Breaker (b = Breaker)
             if (cmdParts.includes("b")) {
                 const hammerId = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
                 bot.weapons[0] = bot.weaponIndex = hammerId;
@@ -110,16 +153,13 @@ export default class CommandManager {
                 (bot as any).isHitting = true;
                 (bot as any).gathering = true;
 
-                // 400ms normal Great Hammer attack cooldown
+                // 400ms normal hammer attack cooldown
                 const hammerCooldown = hammerId === (WEAPON_ID_MAP as any).TOOL_HAMMER ? 300 : 400;
 
                 const attackInterval = setInterval(() => {
                     try {
-                        // Check if bot is dead or removed from the server
                         if (!bot || !bot.isAlive || !PlayerManager.players.some(p => p.sid === bot.sid)) {
                             clearInterval(attackInterval);
-                            
-                            // Cleanup dummy session
                             if ((SessionManager as any).sessions instanceof Map) {
                                 (SessionManager as any).sessions.delete(bot.socketId);
                             } else if ((SessionManager as any).sessions) {
@@ -128,29 +168,53 @@ export default class CommandManager {
                             return;
                         }
 
-                        if (!bot.position) return;
+                        const botPos = getPos(bot);
+                        if (!botPos) return;
 
-                        // Safely filter living breakable objects
-                        const validObjects = ObjectManager.gameObjects.filter(
-                            obj => obj && 
-                                   obj.position && 
-                                   typeof obj.position.x === "number" && 
-                                   typeof obj.position.y === "number" && 
-                                   (obj.health === undefined || obj.health > 0) && 
-                                   (obj as any).isAlive !== false
-                        );
+                        let targetPos: { x: number; y: number } | null = null;
 
-                        if (validObjects.length > 0) {
-                            const nearestObj = validObjects.sort(
-                                (a, b) => getDistSq(a.position, bot.position) - getDistSq(b.position, bot.position)
-                            )[0];
+                        // Check if bot is trapped in a trap (prioritize trap center)
+                        const trap = (bot as any).trap ?? (bot as any).trapObject ?? (bot as any).trapped;
+                        if (trap && (trap.health === undefined || trap.health > 0) && trap.isAlive !== false) {
+                            targetPos = getPos(trap);
+                        }
 
-                            if (nearestObj && nearestObj.position) {
-                                bot.angle = Math.atan2(nearestObj.position.y - bot.position.y, nearestObj.position.x - bot.position.x);
+                        // If not trapped, find the nearest living object / structure
+                        if (!targetPos) {
+                            let minDistanceSq = Infinity;
+
+                            for (const obj of ObjectManager.gameObjects) {
+                                if (!obj || (typeof obj.health === "number" && obj.health <= 0) || (obj as any).isAlive === false) {
+                                    continue;
+                                }
+
+                                const objPos = getPos(obj);
+                                if (!objPos) continue;
+
+                                const dSq = getDistSq(objPos, botPos);
+                                if (dSq < minDistanceSq) {
+                                    minDistanceSq = dSq;
+                                    targetPos = objPos;
+                                }
                             }
                         }
 
-                        // Trigger weapon swing
+                        // Auto-aim towards the center of the target object / trap
+                        if (targetPos) {
+                            const dx = targetPos.x - botPos.x;
+                            const dy = targetPos.y - botPos.y;
+
+                            if (dx !== 0 || dy !== 0) {
+                                const targetAngle = Math.atan2(dy, dx);
+                                bot.angle = targetAngle;
+                                (bot as any).targetAngle = targetAngle;
+                                (bot as any).dir = targetAngle;
+                                (bot as any).rotation = targetAngle;
+                                (bot as any).viewAngle = targetAngle;
+                            }
+                        }
+
+                        // Trigger weapon hit
                         if (typeof (bot as any).hit === "function") {
                             (bot as any).hit(bot.angle ?? 0);
                         } else if (typeof (bot as any).attack === "function") {
@@ -159,7 +223,6 @@ export default class CommandManager {
                             (bot as any).gather();
                         }
                     } catch (err) {
-                        // Prevent unhandled errors from crashing the server
                         console.error("Bot loop error (safely caught):", err);
                     }
                 }, hammerCooldown);
