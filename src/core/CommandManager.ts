@@ -39,6 +39,24 @@ export default class CommandManager {
             player.weaponXP[player.weaponIndex] = 0;
         } else if (cmdId === "k" || cmdId === "kill") {
             player.kill(player);
+        } else if (cmdId === "kb" || cmdId === "killbot" || cmdId === "killbots") {
+            const targetArg = parsed[1];
+
+            if (!targetArg || targetArg.toLowerCase() === "all") {
+                // Kill all active bots
+                const bots = PlayerManager.players.filter(p => p.isAI && p.isAlive);
+                for (const bot of bots) {
+                    bot.kill(player);
+                }
+            } else {
+                // Kill a specific bot by its SID / ID
+                const targetSid = parseInt(targetArg);
+                const targetBot = PlayerManager.players.find(p => p.sid === targetSid && p.isAI && p.isAlive);
+
+                if (targetBot) {
+                    targetBot.kill(player);
+                }
+            }
         } else if (cmdId === "spawn" || cmdId.startsWith("s")) {
             const bot = PlayerManager.create(randString(), "Bot");
             bot.position.x = player.position.x + randInt(-500, 500);
@@ -59,24 +77,37 @@ export default class CommandManager {
                 bot.aiSettings.heal = true;
             }
 
-            // 3. Hammer & Continuous Hitting (b = Hammer Breaker)
+            // 3. Hammer & Auto-Aim Breaker (b = Breaker)
             if (cmdParts.includes("b")) {
-                // Equip Great Hammer or Tool Hammer
-                bot.weapons[0] = bot.weaponIndex = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
-                
+                const hammerId = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
+                bot.weapons[0] = bot.weaponIndex = hammerId;
+
                 (bot.aiSettings as any).hit = true;
                 (bot as any).isAttacking = true;
                 (bot as any).isHitting = true;
                 (bot as any).gathering = true;
 
-                // Continuously trigger weapon hit every 100ms (respects weapon cooldown)
+                // Normal hammer attack cooldown (400ms for Great Hammer, 300ms for Tool Hammer)
+                const hammerCooldown = hammerId === (WEAPON_ID_MAP as any).TOOL_HAMMER ? 300 : 400;
+
                 const attackInterval = setInterval(() => {
                     if (!bot.isAlive) {
                         clearInterval(attackInterval);
                         return;
                     }
 
-                    // Calls the attack/hit function on the Player instance
+                    // Find nearest living breakable object
+                    const nearestObj = ObjectManager.gameObjects
+                        .filter(obj => (obj.health === undefined || obj.health > 0) && (obj as any).isAlive !== false)
+                        .sort((a, b) => getDistSq(a.position, bot.position) - getDistSq(b.position, bot.position))[0];
+
+                    // Auto-aim towards the target object
+                    if (nearestObj) {
+                        const targetPos = nearestObj.position ?? (nearestObj as any);
+                        bot.angle = Math.atan2(targetPos.y - bot.position.y, targetPos.x - bot.position.x);
+                    }
+
+                    // Trigger weapon swing in the auto-aimed direction
                     if (typeof (bot as any).hit === "function") {
                         (bot as any).hit(bot.angle ?? 0);
                     } else if (typeof (bot as any).attack === "function") {
@@ -84,7 +115,7 @@ export default class CommandManager {
                     } else if (typeof (bot as any).gather === "function") {
                         (bot as any).gather();
                     }
-                }, 100);
+                }, hammerCooldown);
             } else {
                 bot.weapons[0] = bot.weaponIndex = WEAPON_ID_MAP.POLEARM;
             }
