@@ -59,17 +59,32 @@ export default class CommandManager {
                 bot.aiSettings.heal = true;
             }
 
-            // 3. Weapon & Attack handling (b = Breaker hammer + continuous hit)
+            // 3. Hammer & Continuous Hitting (b = Hammer Breaker)
             if (cmdParts.includes("b")) {
+                // Equip Great Hammer or Tool Hammer
                 bot.weapons[0] = bot.weaponIndex = (WEAPON_ID_MAP as any).GREAT_HAMMER ?? (WEAPON_ID_MAP as any).TOOL_HAMMER ?? (WEAPON_ID_MAP as any).HAMMER ?? 0;
                 
-                // Enable bot hitting/attacking
                 (bot.aiSettings as any).hit = true;
-                (bot.aiSettings as any).attack = true;
-                (bot.aiSettings as any).hitting = true;
-                (bot.aiSettings as any).breaker = true;
-                (bot as any).autoAttack = true;
+                (bot as any).isAttacking = true;
                 (bot as any).isHitting = true;
+                (bot as any).gathering = true;
+
+                // Continuously trigger weapon hit every 100ms (respects weapon cooldown)
+                const attackInterval = setInterval(() => {
+                    if (!bot.isAlive) {
+                        clearInterval(attackInterval);
+                        return;
+                    }
+
+                    // Calls the attack/hit function on the Player instance
+                    if (typeof (bot as any).hit === "function") {
+                        (bot as any).hit(bot.angle ?? 0);
+                    } else if (typeof (bot as any).attack === "function") {
+                        (bot as any).attack(bot.angle ?? 0);
+                    } else if (typeof (bot as any).gather === "function") {
+                        (bot as any).gather();
+                    }
+                }, 100);
             } else {
                 bot.weapons[0] = bot.weaponIndex = WEAPON_ID_MAP.POLEARM;
             }
