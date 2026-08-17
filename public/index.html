@@ -181,7 +181,108 @@
         window.frvrSdkInitPromise = new Promise((res) => {
             setTimeout(() => {console.log("waht");res()}, 5e3);
         });
-    </script>
+    <!-- GLOBAL CHAT LOG (TOP-LEFT) -->
+<div id="globalChatBox"></div>
+
+<style>
+    #globalChatBox {
+        position: fixed;
+        top: 15px;
+        left: 15px;
+        width: 360px;
+        max-height: 220px;
+        background-color: rgba(10, 12, 18, 0.65);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 10px;
+        color: #ffffff;
+        font-family: 'Plus Jakarta Sans', 'Hammersmith One', sans-serif;
+        font-size: 13px;
+        z-index: 99999;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        pointer-events: auto;
+        user-select: text;
+    }
+    #globalChatBox::-webkit-scrollbar {
+        width: 4px;
+    }
+    #globalChatBox::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    #globalChatBox::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+    }
+    .chat-row {
+        line-height: 1.4;
+        word-break: break-word;
+    }
+    .chat-time {
+        color: #64748b;
+        font-size: 11px;
+        margin-right: 6px;
+        font-family: monospace;
+    }
+    .chat-sender {
+        color: #a78bfa;
+        font-weight: 700;
+        margin-right: 4px;
+    }
+    .chat-text {
+        color: #f1f5f9;
+    }
+</style>
+
+<script>
+    (function () {
+        const chatBox = document.getElementById("globalChatBox");
+        const MAX_SAVED_MESSAGES = 60;
+
+        window.addGlobalMessage = function (name, text) {
+            if (!chatBox) return;
+            const now = new Date();
+            const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const row = document.createElement("div");
+            row.className = "chat-row";
+            row.innerHTML = `
+                <span class="chat-time">[${time}]</span>
+                <span class="chat-sender">${name}:</span>
+                <span class="chat-text">${text}</span>
+            `;
+            chatBox.appendChild(row);
+
+            while (chatBox.children.length > MAX_SAVED_MESSAGES) {
+                chatBox.removeChild(chatBox.firstChild);
+            }
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+        };
+
+        // Hook into the client's packet receiver
+        const checkReceiver = setInterval(() => {
+            if (typeof window.receiveChat === "function") {
+                const oldReceive = window.receiveChat;
+                window.receiveChat = function (sid, message) {
+                    oldReceive(sid, message);
+                    let name = "Player " + sid;
+                    if (typeof findPlayerBySID === "function") {
+                        const p = findPlayerBySID(sid);
+                        if (p && p.name) name = p.name;
+                    }
+                    window.addGlobalMessage(name, message);
+                };
+                clearInterval(checkReceiver);
+            }
+        }, 100);
+    })();
+   </script>
 </body>
 
 </html>
